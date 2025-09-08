@@ -10,18 +10,14 @@ sp = spm.SentencePieceProcessor(model_file="peptide_tokenizer.model")
 vocab_size = sp.GetPieceSize()
 
 transformer = GPTClassifier(vocab_size).to(device)
-transformer.load_state_dict(torch.load("transformer_final.pt", map_location=device))
+transformer.load_state_dict(torch.load("transformer_checkpoint_200.pt", map_location=device))
 transformer.eval()
 
 agent = MaskingDQNAgent(state_size=312, action_size=312)
-agent.load("masking_agent_final.h5")
+agent.load("masking_agent_checkpoint_200.h5")
 
 def predict_user_sequence(sequence: str):
-    """
-    Take a peptide sequence as input and return:
-    - Mask suggested by agent
-    - Predicted label by Transformer
-    """
+    
     tokens = sp.Encode(sequence)
     tokens = tokens[:312]  
     tokens += [0] * (312 - len(tokens))

@@ -4,6 +4,7 @@ from collections import deque
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import load_model
 
 class MaskingDQNAgent:
     def __init__(self, state_size, action_size):
@@ -35,6 +36,9 @@ class MaskingDQNAgent:
             return np.random.randint(0, 2, size=self.action_size)  
         probs = self.model.predict(state, verbose=0)[0]
         return (probs > 0.5).astype(int)  
+    
+    def load(self, path):
+        self.model = load_model(path)
 
     def replay(self, batch_size):
         if len(self.memory) < batch_size:
