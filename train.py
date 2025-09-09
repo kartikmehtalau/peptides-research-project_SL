@@ -64,11 +64,43 @@ agent = MaskingDQNAgent(state_size=312, action_size=312)
 
 batch_size = 32
 checkpoint_interval = 100
-epochs = 3
+pretrain_epochs = 3
+masked_epochs = 3
 
-print("🔹 Training Transformer with DQN masking on AMP + non-AMP sequences...")
+print("🔹 Pretraining Transformer without masking...")
 
-for epoch in range(epochs):
+for epoch in range(pretrain_epochs):
+    total_loss = 0
+    correct = 0
+
+    for i, (seq, label) in enumerate(dataset):
+        tokens = sp.Encode(seq)[:312]
+        tokens += [0] * (312 - len(tokens))
+        input_tensor = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
+        label_tensor = torch.tensor([label], dtype=torch.long, device=device)
+
+        transformer.train()
+        optimizer.zero_grad()
+        logits = transformer(input_tensor)
+        loss = criterion(logits, label_tensor)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+        pred_label = torch.argmax(logits, dim=-1).item()
+        if pred_label == label:
+            correct += 1
+
+        if (i+1) % checkpoint_interval == 0:
+            print(f"Pretrain checkpoint steps | Step {i+1}")
+
+    torch.save(transformer.state_dict(), f"transformer_pretrain_checkpoint_{i+1}.pt")
+    acc = correct / len(dataset)
+    print(f"Pretrain Epoch {epoch+1}/{pretrain_epochs} | Loss: {total_loss/len(dataset):.4f} | Accuracy: {acc:.4f}")
+
+print("✅ Pretraining complete. Starting masked training...")
+
+for epoch in range(masked_epochs):
     total_loss = 0
     correct = 0
 
@@ -76,12 +108,11 @@ for epoch in range(epochs):
         tokens = sp.Encode(seq)[:312]
         tokens += [0] * (312 - len(tokens))
         state = np.array(tokens)
-
-        mask = agent.act(state)
+        mask = (agent.act(state) > 0.5).astype(int)
 
         if not is_valid_peptide(seq):
-            mask = np.ones(312) 
-            label = 0  
+            mask = np.ones(312)
+            label = 0
 
         masked_input = [t if m == 0 else 0 for t, m in zip(state, mask)]
         input_tensor = torch.tensor(masked_input, dtype=torch.long, device=device).unsqueeze(0)
@@ -100,7 +131,7 @@ for epoch in range(epochs):
             correct += 1
 
         pred_prob = torch.softmax(logits, dim=-1)[0, label].item()
-        reward = pred_prob - 0.1 * (mask.sum() / len(mask))  
+        reward = pred_prob - 0.5 * (mask.sum() / len(mask))
         next_state = state.copy()
         done = True
         agent.remember(state, mask, reward, next_state, done)
@@ -108,36 +139,14 @@ for epoch in range(epochs):
 
         if (i+1) % checkpoint_interval == 0:
             agent.save(f"masking_agent_checkpoint_{i+1}.h5")
-            torch.save(transformer.state_dict(), f"transformer_checkpoint_{i+1}.pt")
-            print(f"Checkpoint saved | Step {i+1} | Last Reward: {reward}")
+            torch.save(transformer.state_dict(), f"transformer_masked_checkpoint_{i+1}.pt")
+            print(f"Masked training checkpoint saved | Step {i+1} | Last Reward: {reward}")
 
     acc = correct / len(dataset)
-    print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss/len(dataset):.4f} | Accuracy: {acc:.4f}")
+    print(f"Masked Epoch {epoch+1}/{masked_epochs} | Loss: {total_loss/len(dataset):.4f} | Accuracy: {acc:.4f}")
 
 agent.save("masking_agent_final.h5")
 torch.save(transformer.state_dict(), "transformer_final.pt")
 print("✅ Joint training complete. Transformer and DQN agent saved.")
 
-while True:
-    seq = input("Enter peptide sequence (or 'exit' to quit): ")
-    if seq.lower() == 'exit':
-        break
-    if not is_valid_peptide(seq):
-        print("Predicted Label: 0 (invalid peptide)")
-        continue
 
-    tokens = sp.Encode(seq)[:312]
-    tokens += [0] * (312 - len(tokens))
-    state = np.array(tokens)
-
-    mask = agent.act(state)
-    masked_input = [t if m == 0 else 0 for t, m in zip(state, mask)]
-    input_tensor = torch.tensor(masked_input, dtype=torch.long, device=device).unsqueeze(0)
-
-    transformer.eval()
-    with torch.no_grad():
-        pred_label = torch.argmax(transformer(input_tensor), dim=-1).item()
-
-    print(f"Predicted Label: {pred_label}")
-    print(f"Mask applied by agent: {mask}")
-    print(f"Masked Input Tokens: {masked_input}")
