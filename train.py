@@ -64,7 +64,7 @@ agent = MaskingDQNAgent(state_size=312, action_size=312)
 
 batch_size = 32
 checkpoint_interval = 100
-pretrain_epochs = 3
+pretrain_epochs = 10
 masked_epochs = 3
 
 print("🔹 Pretraining Transformer without masking...")
@@ -91,12 +91,12 @@ for epoch in range(pretrain_epochs):
         if pred_label == label:
             correct += 1
 
-        if (i+1) % checkpoint_interval == 0:
+        if (i + 1) % checkpoint_interval == 0:
             print(f"Pretrain checkpoint steps | Step {i+1}")
 
     torch.save(transformer.state_dict(), f"transformer_pretrain_checkpoint_{i+1}.pt")
     acc = correct / len(dataset)
-    print(f"Pretrain Epoch {epoch+1}/{pretrain_epochs} | Loss: {total_loss/len(dataset):.4f} | Accuracy: {acc:.4f}")
+    print(f"Pretrain Epoch {epoch+1}/{pretrain_epochs} | Loss: {total_loss / len(dataset):.4f} | Accuracy: {acc:.4f}")
 
 print("✅ Pretraining complete. Starting masked training...")
 
@@ -108,7 +108,22 @@ for epoch in range(masked_epochs):
         tokens = sp.Encode(seq)[:312]
         tokens += [0] * (312 - len(tokens))
         state = np.array(tokens)
-        mask = (agent.act(state) > 0.5).astype(int)
+
+        raw_mask = (agent.act(state) > 0.5).astype(int)
+        min_mask_tokens = int(0.1 * len(state))
+        max_mask_tokens = int(0.5 * len(state))
+
+        if raw_mask.sum() < min_mask_tokens:
+            unmasked_indices = np.where(raw_mask == 0)[0]
+            additional = np.random.choice(unmasked_indices, min_mask_tokens - raw_mask.sum(), replace=False)
+            raw_mask[additional] = 1
+        elif raw_mask.sum() > max_mask_tokens:
+            mask_indices = np.where(raw_mask == 1)[0]
+            selected_indices = np.random.choice(mask_indices, max_mask_tokens, replace=False)
+            raw_mask = np.zeros_like(raw_mask)
+            raw_mask[selected_indices] = 1
+
+        mask = raw_mask
 
         if not is_valid_peptide(seq):
             mask = np.ones(312)
@@ -131,19 +146,24 @@ for epoch in range(masked_epochs):
             correct += 1
 
         pred_prob = torch.softmax(logits, dim=-1)[0, label].item()
-        reward = pred_prob - 0.5 * (mask.sum() / len(mask))
+        reward = pred_prob - 0.2 * (mask.sum() / len(mask))  
+
+        if (i + 1) % 500 == 0:
+            print(f"Step {i+1} | Logits: {logits.detach().cpu().numpy()} | Probs: {torch.softmax(logits, dim=-1).detach().cpu().numpy()} | Masked Tokens: {mask.sum()}")
+
         next_state = state.copy()
         done = True
         agent.remember(state, mask, reward, next_state, done)
         agent.replay(batch_size)
 
-        if (i+1) % checkpoint_interval == 0:
-            agent.save(f"masking_agent_checkpoint_{i+1}.h5")
+        if (i + 1) % checkpoint_interval == 0:
+            agent.save(f"masking_agent_checkpoint_{i+1}.keras")  # Save as .keras
             torch.save(transformer.state_dict(), f"transformer_masked_checkpoint_{i+1}.pt")
-            print(f"Masked training checkpoint saved | Step {i+1} | Last Reward: {reward}")
+            print(f"Step {i+1} | Last Reward: {reward:.4f} | Masked Tokens: {mask.sum()} / {len(mask)}")
 
     acc = correct / len(dataset)
-    print(f"Masked Epoch {epoch+1}/{masked_epochs} | Loss: {total_loss/len(dataset):.4f} | Accuracy: {acc:.4f}")
+    print(f"Masked Epoch {epoch + 1}/{masked_epochs} | Loss: {total_loss / len(dataset):.4f} | Accuracy: {acc:.4f}")
+
 
 agent.save("masking_agent_final.h5")
 torch.save(transformer.state_dict(), "transformer_final.pt")

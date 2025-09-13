@@ -15,11 +15,11 @@ valid_aas = set("ACDEFGHIKLMNPQRSTVWY")
 def is_valid_peptide(seq):
     return all(residue in valid_aas for residue in seq.upper())
 transformer = GPTClassifier(vocab_size).to(device)
-transformer.load_state_dict(torch.load("transformer_masked_checkpoint_800.pt", map_location=device))
+transformer.load_state_dict(torch.load("transformer_masked_checkpoint_1400.pt", map_location=device))
 transformer.eval()
 
 agent = MaskingDQNAgent(state_size=312, action_size=312)
-agent.load("masking_agent_checkpoint_800.h5")
+agent.load("masking_agent_checkpoint_1400.h5")
 
 def predict_user_sequence(sequence: str):
     
